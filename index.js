@@ -1,30 +1,57 @@
-"use strict";
+'use strict';
 const exec = require('child_process').exec;
 const log = require('karma/lib/logger').create('launcher:MobileSafari');
 const async = require('marcosc-async');
 
-var MobileSafari = function(baseBrowserDecorator) {
-  if(process.platform !== "darwin"){
-    log.error("This launcher only works in MacOS.");
+var MobileSafari = function(baseBrowserDecorator, args) {
+  if(process.platform !== 'darwin'){
+    log.error('This launcher only works in MacOS.');
     this._process.kill();
     return;
   }
+
   baseBrowserDecorator(this);
+
   this._start = function(url) {
-    this._execCommand(this._getCommand(), []);
-    // Wait till Simulator is ready ~2sec as there is no IPC "ready" message :(
-    setTimeout(() => {
-      const cmd = `xcrun simctl openurl booted ${url}`;
-      toExecPromise(cmd).catch(attemptToRecover.bind(this));
-    }, 2000);
-  };
+    return async.task(function * () {
+      try {
+        if (args.device) {
+          return getDeviceUUID.bind(this)(yield toExecPromise('xcrun simctl list devices'), args.device);
+        }
+        return false;
+      } catch (err) {
+        console.log('attemptToRecover', err);
+      }
+    }, this).then(launchSimulator.bind(this, args, url));
+  }
 };
+
+function launchSimulator(args, url, uuid) {
+  var commandArgs = [];
+
+  if (Object.keys(args).length > 1) {
+    commandArgs.push('--args');
+
+    if (!args['-CurrentDeviceUUID'] && uuid) {
+      commandArgs.push('-CurrentDeviceUUID');
+      commandArgs.push(uuid);
+    }
+  }
+
+  this._execCommand(this._getCommand(), commandArgs);
+
+  // Wait till Simulator is ready ~2sec as there is no IPC 'ready' message :(
+  setTimeout(() => {
+    const cmd = `xcrun simctl openurl booted ${url}`;
+    toExecPromise(cmd).catch(attemptToRecover.bind(this));
+  }, 2000);
+}
 
 function toExecPromise(cmd) {
   return new Promise((resolve, reject) => {
     const id = setTimeout(() => {
       reject(new Error(`Command took too long: ${cmd}`));
-      proc.kill("SIGTERM");
+      proc.kill('SIGTERM');
     }, 20000);
     const proc = exec(cmd, (err, stdout) => {
       clearTimeout(id);
@@ -51,10 +78,10 @@ function attemptToRecover(err) {
     log.warn(`Problem starting simulator. Attempting to recover. Please wait ~30sec!`);
     // Let's try to kill booted custom instances
     try {
-      const data = yield toExecPromise("xcrun simctl list");
+      const data = yield toExecPromise('xcrun simctl list');
       yield processData.bind(this)(data);
     } catch (err) {
-      console.log("attemptToRecover", err);
+      console.log('attemptToRecover', err);
     }
     this._process.kill();
   }, this);
@@ -89,20 +116,45 @@ function processData(data) {
   });
 }
 
+function getDeviceUUID(data, device) {
+  var regexpUUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+  var captureUUIDWithBrackets = new RegExp(' [(]{1}' + regexpUUID + '[)]{1} ', 'i');
+  var captureUUID = new RegExp(regexpUUID, 'i');
+
+  var foundDevices = data
+    .split('\n')
+    .map(
+      line => line.trim()
+    )
+    .filter(
+      device => !(device.startsWith('--') || device.startsWith('==')) && device.length > 0
+    )
+    .reduce(
+      (result, device) => {
+        var key = device.split(captureUUIDWithBrackets)[0];
+        result[key] = device.match(captureUUID)[0];
+
+        return result;
+      }, {});
+
+  return foundDevices[device];
+}
+
+
 function findBootedDevices(data) {
   // We are going to exclude Apple's default Devices, and separators
   var captureName = /^[A-Za-z0-9_ ]+/;
   var captureUUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
   var foundDevices = data
-    .split("\n")
+    .split('\n')
     .filter(
-      device => !device.startsWith("--") || device.startsWith("==")
+      device => !device.startsWith('--') || device.startsWith('==')
     )
     .map(
       line => line.trim()
     )
     .filter(
-      device => device.endsWith("(Booted)")
+      device => device.endsWith('(Booted)')
     )
     .map(
       device => {
@@ -122,7 +174,7 @@ MobileSafari.prototype = {
   ENV_CMD: null,
 };
 
-MobileSafari.$inject = ['baseBrowserDecorator'];
+MobileSafari.$inject = ['baseBrowserDecorator', 'args'];
 
 module.exports = {
   'launcher:MobileSafari': ['type', MobileSafari]
