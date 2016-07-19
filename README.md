@@ -16,7 +16,13 @@ npm install --save-dev karma-ios-simulator-launcher
 // karma.conf.js
 module.exports = function(config) {
   config.set({
-    browsers: ['MobileSafari']
+    browsers: ['iPhone5Safari'],
+    customLaunchers = {
+      iPhone5Safari: {
+        base: 'MobileSafari',
+        device: 'iPhone 5'
+      }
+    }
   });
 };
 ```
